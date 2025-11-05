@@ -27,11 +27,36 @@ svg {
   display: block;
 }
 
-#slider-value {
-  font-size: 20px;
-  font-weight: bold;
-  color: black;
-  font-family: sans-serif;
-  margin: 5px;
+#year-slider {
+  width: 100%;
+  max-width: 800px;
+  margin: 1rem auto;
 }
 
+main {
+  background: white;
+  color: var(--color-neutral-20);
+  border-radius: 1rem;
+  padding: 0.1rem 2rem;
+}
+
+:root {
+  --color-neutral-95: hsl(220 10% 95%);
+  --color-neutral-90: hsl(220 10% 90%);
+  --color-neutral-80: hsl(220 10% 80%);
+  --color-neutral-70: hsl(220 10% 70%);
+  --color-neutral-60: hsl(220 10% 60%);
+  --color-neutral-50: hsl(220 10% 50%);
+  --color-neutral-40: hsl(220 10% 40%);
+  --color-neutral-30: hsl(220 10% 30%);
+  --color-neutral-20: hsl(220 10% 20%);
+  --color-neutral-10: hsl(220 10% 10%);
+}
+
+html {
+  font: 100%/1.5 system-ui;
+  counter-reset: figure;
+  background: var(--color-neutral-95);
+  max-width: min(75vw, 80em);
+  margin: 0 auto;
+}

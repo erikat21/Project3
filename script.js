@@ -27,13 +27,10 @@ function drawMap(mapData, tsData) {
   d3.select("#map").selectAll("*").remove(); // clear previous map
   const svg = d3.select("#map")
     .append("svg")
-    // .attr("viewBox", `0 0 ${mapWidth + 100} ${mapHeight}`)
     .attr("viewBox", `0 ${mapHeight * 0.04} ${mapWidth + 100} ${mapHeight * 0.96}`)
     .attr("preserveAspectRatio", "xMidYMid meet")
     .classed("responsive-svg", true);
 
-
-    
   // Projection
   const projection = d3.geoEquirectangular()
     .scale(mapWidth / (2 * Math.PI))
@@ -43,7 +40,6 @@ function drawMap(mapData, tsData) {
 
   const minVal = d3.min(mapData, d => d.value);
   const maxVal = d3.max(mapData, d => d.value);
-
 
   const colorScale = d3.scaleSequential()
     .domain([maxVal, minVal])          // reversed to match Python coolwarm
@@ -106,8 +102,6 @@ regionGroups.append("text")
   .attr("font-size", "18px")
   .attr("font-weight", "bold")
   .text(d => d.name);
-
-
   
 // Legend dimensions
 const legendWidth = 20;
