@@ -540,7 +540,7 @@ function drawCalcChart(calcData, region, lev) {
   const deltaC = (calcLast != null && calcFirst != null) ? (calcLast - calcFirst) : null;
   calcAnnotation.html(`
     <p>Calcite concentration, a major indicator of the ocean's ability to neutralize acidity, has changed unevenly since industrialization. In places where it has declined, this change has left coral ecosystems and countless marine species more vulnerable to environmental degradation.</p>
-     <p>Since ${yearFirst}, the ${region} Ocean's calcite concentration at level ${lev} changed by <strong>${formatSciDelta(deltaC, 2)}</strong> mol m<sup>−3</sup>. Calcite concentration reached a low of <strong>${formatSci(minRow.calc, 2)}</strong> mol m<sup>−3</sup> in ${minRow.year}.</p>
+     <p>Since ${yearFirst}, the ${region} Ocean's calcite concentration at level ${lev} changed by <strong>${formatSciDelta(deltaC, 2)} mol m<sup>−3</sup></strong>. Calcite concentration reached a low of <strong>${formatSci(minRow.calc, 2)} mol m<sup>−3</sup></strong> in ${minRow.year}.</p>
   `).style("font-size", "14px")
    .style("color", "#333")
    .style("margin-top", "0.5rem");
