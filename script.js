@@ -383,7 +383,7 @@ function drawChart(tsData, region) {
   const deltaT = (tempLast - tempFirst);
   chartAnnotation.html(`
   <p>Global sea surface temperatures started rising rapidly after the middle of the 20th century, reflecting the impact of industrial growth and increased fossil fuel emissions.</p>
-  <p>Since 1850 the ${region} Ocean's mean sea surface temperature changed by <strong>${formatDelta(deltaT, 2)} K</strong>, while reaching a peak of <strong>${maxData.temperature_K.toFixed(2)} K</strong> in ${maxData.year}.</p>
+  <p>Since 1850, the ${region} Ocean's mean sea surface temperature changed by <strong>${formatDelta(deltaT, 2)} K</strong>, while reaching a peak of <strong>${maxData.temperature_K.toFixed(2)} K</strong> in ${maxData.year}.</p>
 `)
   .style("font-size", "14px")
   .style("color", "#333")
