@@ -484,7 +484,7 @@ function drawCalcChart(calcData, region, lev) {
     .attr("text-anchor", "middle")
     .attr("font-size", "14px")
     .attr("fill", "#555")
-    .text(`Simulated ${region} Ocean Calcite Concentration at Level ${lev} (${Math.round(lev/100)} m)`);
+    .text(`Simulated ${region} Ocean Calcite Concentration at Level ${lev} (${Math.round(lev/100)} meters)`);
 
   svg.append("text")
     .attr("class", "y-label")
