@@ -1,13 +1,14 @@
-// Basic dimensions
+/* =========================
+   Global dims & helpers
+========================= */
 const mapWidth = 800;
 const mapHeight = 400;
 const chartWidth = 800;
 const chartHeight = 400;
 const TOP_PAD = 72;
 
-
-// Formatting helpers for pills
-function formatSci(val, digits=2){
+/* ---------- Formatting helpers ---------- */
+function formatSci(val, digits = 2) {
   if (val == null || isNaN(val)) return "—";
   if (val === 0) return "0";
   const exp = Math.floor(Math.log10(Math.abs(val)));
@@ -17,43 +18,67 @@ function formatSci(val, digits=2){
   const absExp = Math.abs(exp);
   return `${m}×10` + `<span class="sup">${sign}${absExp}</span>`;
 }
-function fmtNum(val, digits=2){
+function fmtNum(val, digits = 2) {
   return (val == null || isNaN(val)) ? "—" : (+val).toFixed(digits);
 }
+function formatDelta(val, digits = 2) {
+  if (val == null || isNaN(val)) return "—";
+  const s = (+val).toFixed(digits);
+  return (+val > 0 ? `+${s}` : s);
+}
+function formatSciDelta(val, digits = 2) {
+  if (val == null || isNaN(val)) return "—";
+  const html = formatSci(val, digits);
+  return (+val > 0 ? `+${html}` : html);
+}
 
-// Load data and draw map
+/* ---------- Loader ---------- */
+function showLoader(msg = "Loading data…") {
+  const el = document.getElementById("app-loader");
+  if (!el) return;
+  const txt = el.querySelector(".loader-text");
+  if (txt) txt.textContent = msg;
+  el.hidden = false;
+  document.body.classList.add("is-loading");
+}
+function hideLoader() {
+  const el = document.getElementById("app-loader");
+  if (!el) return;
+  requestAnimationFrame(() => {
+    el.hidden = true;
+    document.body.classList.remove("is-loading");
+    el.setAttribute("aria-busy", "false");
+  });
+}
+
+/* =========================
+   Data load + first render
+========================= */
+showLoader();
+
 Promise.all([
-  d3.csv("data/sst_mean_map.csv"),
-  d3.csv("data/ocean_timeseries.csv"),
-  d3.csv("data/calc_by_region.csv")
+  // parse at read time for speed
+  d3.csv("data/sst_mean_map.csv", d => ({ lon:+d.lon, lat:+d.lat, value:+d.value })),
+  d3.csv("data/ocean_timeseries.csv", d => ({ region:d.region, year:+d.year, temperature_K:+d.temperature_K })),
+  d3.csv("data/calc_by_region.csv", d => ({ region:d.region, lev:+d.lev, time:+d.time, calc:+d.calc }))
 ]).then(([mapData, tsData, calcData]) => {
-  // Convert numeric values
-  mapData.forEach(d => {
-    d.lon = +d.lon;
-    d.lat = +d.lat;
-    d.value = +d.value;
-  });
-  tsData.forEach(d => {
-    d.temperature_K = +d.temperature_K;
-    d.year = +d.year;
-  });
-
   drawMap(mapData, tsData, calcData);
 
-  // hook up the dropdown so changing it redraws the calc chart
-  const levSelect = d3.select("#lev-select");
-  if (!levSelect.empty()) {
-    levSelect.on("change", function () {
-      const newLev = +this.value;
-      if (window.currentRegion) {
-        drawCalcChart(calcData, window.currentRegion, newLev);
-      }
-    });
-  }
+  // After first paint, hide loader
+  const idle = window.requestIdleCallback || (fn => setTimeout(fn, 0));
+  idle(() => hideLoader());
+}).catch(err => {
+  console.error(err);
+  const el = document.getElementById("app-loader");
+  if (el) el.querySelector(".loader-text").textContent = "Failed to load data.";
 });
 
+/* =========================
+   Map + legend + region click
+========================= */
 function drawMap(mapData, tsData, calcData) {
-  d3.select("#map").selectAll("*").remove(); // clear previous map
+  d3.select("#map").selectAll("*").remove();
+
   const svg = d3.select("#map")
     .append("svg")
     .attr("viewBox", `0 ${mapHeight * 0.04} ${mapWidth + 100} ${mapHeight * 0.96}`)
@@ -65,22 +90,15 @@ function drawMap(mapData, tsData, calcData) {
     .scale(mapWidth / (2 * Math.PI))
     .translate([mapWidth / 2, mapHeight / 2]);
 
-  const minVal = d3.min(mapData, d => d.value);
-  const maxVal = d3.max(mapData, d => d.value);
-
-  // ====== DISCRETE COLOR BINS (5) ======
+  // Discrete color bins (5)
   const nBins = 5;
   const sortedVals = mapData.map(d => d.value).sort((a, b) => a - b);
   const quantiles = [0, 0.2, 0.4, 0.6, 0.8, 1].map(p => d3.quantileSorted(sortedVals, p));
-  const thresholds = quantiles.slice(1, -1); // q20,q40,q60,q80 (4 thresholds → 5 bins)
+  const thresholds = quantiles.slice(1, -1); // 4 thresholds -> 5 bins
   const colors = d3.schemeRdYlBu[nBins].slice().reverse(); // blue=cold → red=warm
+  const colorScale = d3.scaleThreshold().domain(thresholds).range(colors);
 
-  const colorScale = d3.scaleThreshold()
-    .domain(thresholds)
-    .range(colors);
-  // =====================================
-
-  // Draw rectangles as pseudo-pixels
+  // Paint “pixels”
   const cellSize = 5;
   svg.selectAll("rect.cell")
     .data(mapData)
@@ -94,36 +112,34 @@ function drawMap(mapData, tsData, calcData) {
     .attr("fill", d => colorScale(d.value))
     .attr("stroke", "none");
 
-  // Define rough bounding boxes for oceans
+  // Region hit areas
   const regions = [
-    { name: "Atlantic", lon: [-80, 20], lat: [-60, 60] },
-    { name: "Pacific",  lon: [120, 180], lat: [-60, 60] }, // wrap-around handled
+    { name: "Atlantic", lon: [-80, 20],   lat: [-60, 60] },
+    { name: "Pacific",  lon: [120, 180],  lat: [-60, 60] },
     { name: "Pacific",  lon: [-180, -80], lat: [-60, 60] },
-    { name: "Indian",   lon: [20, 120],  lat: [-60, 30] },
+    { name: "Indian",   lon: [20, 120],   lat: [-60, 30] },
     { name: "Arctic",   lon: [-180, 180], lat: [60, 90] },
     { name: "Southern", lon: [-180, 180], lat: [-90, -60] }
   ];
 
-  // Create a group for each region (rect + label)
   const regionGroups = svg.selectAll(".region-group")
     .data(regions)
     .enter()
     .append("g")
     .attr("class", "region-group")
     .style("cursor", "pointer")
-    .on("mouseover", function(event, d) {
+    .on("mouseover", function () {
       d3.select(this).select("rect").style("fill", "rgba(255,208,0,0.2)");
     })
-    .on("mouseout", function() {
+    .on("mouseout", function () {
       d3.select(this).select("rect").style("fill", "transparent");
     })
     .on("click", (event, d) => {
-      drawChart(tsData, d.name);            // existing SST chart
-      drawCalcChart(calcData, d.name, 500); // calc chart default lev=500
+      drawChart(tsData, d.name);
+      drawCalcChart(calcData, d.name, 500);
       window.currentRegion = d.name;
     });
 
-  // Append rectangle to each group (hit area)
   regionGroups.append("rect")
     .attr("x", d => projection([d.lon[0], d.lat[1]])[0])
     .attr("y", d => projection([d.lon[0], d.lat[1]])[1])
@@ -131,12 +147,11 @@ function drawMap(mapData, tsData, calcData) {
     .attr("height", d => projection([0, d.lat[0]])[1] - projection([0, d.lat[1]])[1])
     .style("fill", "transparent");
 
-  // Append label to each group
   regionGroups.append("text")
     .attr("x", d => projection([(d.lon[0] + d.lon[1]) / 2, (d.lat[0] + d.lat[1]) / 2])[0])
     .attr("y", d => {
       const center = projection([(d.lon[0] + d.lon[1]) / 2, (d.lat[0] + d.lat[1]) / 2])[1];
-      return center + (d.name === "Southern" ? 8 : 0); // ↓ nudge Southern a bit
+      return center + (d.name === "Southern" ? 8 : 0);
     })
     .attr("text-anchor", "middle")
     .attr("dy", "0.35em")
@@ -144,56 +159,47 @@ function drawMap(mapData, tsData, calcData) {
     .attr("font-weight", "bold")
     .text(d => d.name);
 
+  // Legend
   const legendWidth = 20;
-const legendHeight = 300;
-const binHeight = legendHeight / nBins;
+  const legendHeight = 300;
+  const binHeight = legendHeight / nBins;
 
-// Legend group (right of map)
-const legend = svg.append("g")
-  .attr("transform", `translate(${mapWidth + 10},55)`);
+  const legend = svg.append("g")
+    .attr("transform", `translate(${mapWidth + 10},55)`);
 
-// Draw bins (cool → warm, bottom→top)
-legend.selectAll("rect.step")
-  .data(colors)
-  .enter()
-  .append("rect")
-  .attr("class", "step")
-  .attr("x", 0)
-  .attr("y", (d, i) => legendHeight - (i + 1) * binHeight)
-  .attr("width", legendWidth)
-  .attr("height", binHeight)
-  .attr("fill", d => d);
+  legend.selectAll("rect.step")
+    .data(colors)
+    .enter()
+    .append("rect")
+    .attr("class", "step")
+    .attr("x", 0)
+    .attr("y", (d, i) => legendHeight - (i + 1) * binHeight)
+    .attr("width", legendWidth)
+    .attr("height", binHeight)
+    .attr("fill", d => d);
 
-// ----- Labels aligned with bin boundaries (numbers only, no tick lines) -----
-const edges = [quantiles[0], ...thresholds, quantiles[quantiles.length - 1]]; // nBins+1 edges
-const edgeIdx = d3.range(edges.length);                                       // 0..n
+  // Numbers only (no tick lines)
+  const edges = [quantiles[0], ...thresholds, quantiles[quantiles.length - 1]];
+  const edgeIdx = d3.range(edges.length);
+  const idxScale = d3.scaleLinear().domain([0, edges.length - 1]).range([legendHeight, 0]);
 
-// Index scale matches how the bins were drawn: equally spaced
-const idxScale = d3.scaleLinear()
-  .domain([0, edges.length - 1])
-  .range([legendHeight, 0]);  // same as rects
+  const axisIdx = d3.axisRight(idxScale)
+    .tickValues(edgeIdx)                       // all boundaries
+    .tickFormat(i => d3.format(".1f")(edges[i]));
 
-const axisIdx = d3.axisRight(idxScale)
-  .tickValues(edgeIdx)                            // ticks at each boundary
-  .tickFormat(i => d3.format(".1f")(edges[i]));   // show the real value
+  const ax = legend.append("g")
+    .attr("class", "legend-axis")
+    .attr("transform", `translate(${legendWidth},0)`)
+    .call(axisIdx);
 
-const ax = legend.append("g")
-  .attr("class", "legend-axis")
-  .attr("transform", `translate(${legendWidth},0)`)
-  .call(axisIdx);
+  ax.select("path.domain").remove();
+  ax.selectAll("line").remove();
+  ax.selectAll("text")
+    .attr("dx", "1px")
+    .attr("fill", "#444")
+    .style("font-size", "10px");
 
-// Hide tick lines & domain, keep only numbers
-ax.select("path.domain").remove();
-ax.selectAll("line").remove();
-
-// Optional cosmetics
-ax.selectAll("text")
-  .attr("dx", "1px")
-  .attr("fill", "#444")
-  .style("font-size", "10px");
-
-
-  // Axis label (nudged right to avoid overlapping the legend)
+  // Legend label
   svg.append("text")
     .attr("text-anchor", "middle")
     .attr("transform", `rotate(-90, ${mapWidth + 95}, ${55 + legendHeight / 2})`)
@@ -201,32 +207,22 @@ ax.selectAll("text")
     .attr("y", 50 + legendHeight / 2)
     .attr("font-size", "14px")
     .text("Sea Surface Temperature (K)");
-  // =======================================
-}
-function formatDelta(val, digits = 2) {
-  if (val == null || isNaN(val)) return "—";
-  const s = (+val).toFixed(digits);
-  return (+val > 0 ? `+${s}` : s);
 }
 
-function formatSciDelta(val, digits = 2) {
-  if (val == null || isNaN(val)) return "—";
-  const html = formatSci(val, digits);       // uses your superscript styling
-  return (+val > 0 ? `+${html}` : html);
-}
-// SST chart for a region
+/* =========================
+   SST line chart + slider
+========================= */
 function drawChart(tsData, region) {
   d3.select("#chart").selectAll("*").remove();
 
   const svg = d3.select("#chart")
     .append("svg")
-    .attr("viewBox", `0 0 ${mapWidth} ${mapHeight + 40}`)
+    .attr("viewBox", `0 0 ${mapWidth} ${chartHeight + 40}`)
     .attr("preserveAspectRatio", "xMidYMid meet")
     .classed("responsive-svg", true);
 
   const regionData = tsData.filter(d => d.region === region);
 
-  // Scales
   const x = d3.scaleLinear()
     .domain(d3.extent(regionData, d => d.year))
     .range([60, chartWidth - 20]);
@@ -236,7 +232,6 @@ function drawChart(tsData, region) {
     .nice()
     .range([chartHeight - 40, TOP_PAD]);
 
-  // Line generator
   const line = d3.line()
     .x(d => x(d.year))
     .y(d => y(d.temperature_K));
@@ -256,7 +251,6 @@ function drawChart(tsData, region) {
     .style("margin-bottom", "16px")
     .style("text-align", "center");
 
-  // Create slider (add .range class for styling)
   const slider = d3.select("#year-slider")
     .append("input")
     .attr("type", "range")
@@ -267,7 +261,6 @@ function drawChart(tsData, region) {
     .attr("step", 1)
     .style("width", "100%");
 
-  // Circle marker for current year
   const marker = svg.append("circle")
     .attr("cx", x(regionData[0].year))
     .attr("cy", y(regionData[0].temperature_K))
@@ -276,28 +269,18 @@ function drawChart(tsData, region) {
 
   const firstYear = regionData[0].year;
   const firstTemp = regionData[0].temperature_K;
-  let firstCalcText = "";
-  if (typeof window.getCalcForYear === "function") {
-    const firstCalc = window.getCalcForYear(firstYear);
-    if (firstCalc != null) {
-      firstCalcText = `, Calc: ${firstCalc.toExponential(3)} mol m-3`;
-    }
-  }
 
-  const valueText = d3.select("#slider-value")
+  d3.select("#slider-value")
     .html(`
       <div class="stats-row" role="group" aria-live="polite" aria-label="Selected year, temperature, and calcite concentration">
         <output id="outYear" class="pill stat"><span class="label">Year</span><span class="val tabnums">${firstYear}</span></output>
         <output id="outTemp" class="pill stat"><span class="label">Temp</span><span class="val tabnums">${fmtNum(firstTemp,2)}&nbsp;K</span></output>
-        <output id="outCalc" class="pill stat"><span class="label">Calc</span><span class="val tabnums">${
-          (typeof window.getCalcForYear === "function" && window.getCalcForYear(firstYear)!=null) ? formatSci(window.getCalcForYear(firstYear),2) + '&nbsp;mol m<span class="sup">−3</span>' : '—'
-        }</span></output>
+        <output id="outCalc" class="pill stat"><span class="label">Calc</span><span class="val tabnums">—</span></output>
       </div>
     `)
     .style("font-size", "18px");
 
-  // Slider change
-  slider.on("input", function() {
+  slider.on("input", function () {
     const selectedYear = +this.value;
     const yearData = regionData.find(d => d.year === selectedYear);
     if (!yearData) return;
@@ -306,55 +289,43 @@ function drawChart(tsData, region) {
       .attr("cx", x(yearData.year))
       .attr("cy", y(yearData.temperature_K));
 
-    let calcText = "";
-    if (typeof window.getCalcForYear === "function") {
-      const calcVal = window.getCalcForYear(selectedYear);
-      if (calcVal != null) {
-        calcText = `, Calc: ${calcVal.toExponential(2)} mol m-3`;
-      }
-    }
     const outYear = document.getElementById('outYear');
     const outTemp = document.getElementById('outTemp');
     const outCalc = document.getElementById('outCalc');
     if (outYear) outYear.querySelector('.val').textContent = `${yearData.year}`;
     if (outTemp) outTemp.querySelector('.val').textContent = `${yearData.temperature_K.toFixed(2)}\u00A0K`;
+
     if (outCalc) {
       const val = (typeof window.getCalcForYear === "function") ? window.getCalcForYear(selectedYear) : null;
-      outCalc.querySelector('.val').innerHTML = (val==null) ? '—' : formatSci(val,2) + '&nbsp;mol m<span class="sup">−3</span>';
+      outCalc.querySelector('.val').innerHTML = (val == null) ? '—' : formatSci(val, 2) + '&nbsp;mol m<span class="sup">−3</span>';
     }
 
-    if (window.updateCalcYear) {
-      window.updateCalcYear(selectedYear);
-    }
+    if (window.updateCalcYear) window.updateCalcYear(selectedYear);
   });
 
-  // Axes
-  svg.append("g")
-    .attr("class", "x axis")
+  svg.append("g").attr("class", "x axis")
     .attr("transform", `translate(0,${chartHeight - 40})`)
     .call(d3.axisBottom(x).tickFormat(d3.format("d")));
 
-  svg.append("g")
-    .attr("class", "y axis")
+  svg.append("g").attr("class", "y axis")
     .attr("transform", `translate(60,0)`)
     .call(d3.axisLeft(y));
 
-  // Title
   svg.append("text")
     .attr("x", chartWidth / 2)
     .attr("y", 20)
     .attr("text-anchor", "middle")
     .attr("font-size", "20px")
     .text(`A Century and a Half of Warmer Seas`);
+
   svg.append("text")
     .attr("x", chartWidth / 2)
-    .attr("y", 38)                // ~18px below; tweak if needed
+    .attr("y", 38)
     .attr("text-anchor", "middle")
     .attr("font-size", "14px")
     .attr("fill", "#6d6464ff")
-    .text(`Simulated ${region} Ocean Mean Annual Sea Surface Temperature`);  
+    .text(`Simulated ${region} Ocean Mean Annual Sea Surface Temperature`);
 
-  // X-axis label
   svg.append("text")
     .attr("text-anchor", "middle")
     .attr("x", chartWidth / 2 + 5)
@@ -362,7 +333,6 @@ function drawChart(tsData, region) {
     .attr("font-size", "14px")
     .text("Year");
 
-  // Y-axis label
   svg.append("text")
     .attr("class", "y-label")
     .attr("text-anchor", "middle")
@@ -372,32 +342,31 @@ function drawChart(tsData, region) {
     .attr("font-size", "14px")
     .text("Sea Surface Temperature in Kelvin (K)");
 
-  // --- Annotation outside SVG ---
   const yearFirst = 1850;
   const yearLast = 2014;
   const tempFirst = regionData.find(d => d.year === yearFirst)?.temperature_K;
   const tempLast = regionData.find(d => d.year === yearLast)?.temperature_K;
   const maxData = regionData.reduce((a, b) => a.temperature_K > b.temperature_K ? a : b);
 
-  const chartAnnotation = d3.select("#chart-annotation");
-  const deltaT = (tempLast - tempFirst);
-  chartAnnotation.html(`
-  <p>Global sea surface temperatures started rising rapidly after the middle of the 20th century, reflecting the impact of industrial growth and increased fossil fuel emissions.</p>
-  <p>Since 1850, the ${region} Ocean's mean sea surface temperature changed by <strong>${formatDelta(deltaT, 2)} K</strong>, while reaching a peak of <strong>${maxData.temperature_K.toFixed(2)} K</strong> in ${maxData.year}.</p>
-`)
-  .style("font-size", "14px")
-  .style("color", "#333")
-  .style("margin-top", "0.5rem");
+  d3.select("#chart-annotation")
+    .html(`
+      <p>Global sea surface temperatures started rising rapidly after the middle of the 20th century, reflecting the impact of industrial growth and increased fossil fuel emissions.</p>
+      <p>Since 1850, the ${region} Ocean's mean sea surface temperature changed by <strong>${formatDelta(tempLast - tempFirst, 2)} K</strong>, while reaching a peak of <strong>${maxData.temperature_K.toFixed(2)} K</strong> in ${maxData.year}.</p>
+    `)
+    .style("font-size", "14px")
+    .style("color", "#333")
+    .style("margin-top", "0.5rem");
 }
 
+/* =========================
+   Calcite chart + level select
+========================= */
 function drawCalcChart(calcData, region, lev) {
-  // remember current selection for dropdown redraws
   window.currentRegion = region;
   window.currentLev = lev;
 
   d3.select("#calc-chart").selectAll("*").remove();
 
-  // Build a dropdown above the chart
   const panel = d3.select("#calc-panel");
   panel.select("#lev-select-container").remove();
 
@@ -416,9 +385,11 @@ function drawCalcChart(calcData, region, lev) {
     .attr("id", "lev-select")
     .style("font-size", "14px");
 
-  const levOptions = [500, 1500, 2500, 3500, 4500,
+  const levOptions = [
+    500, 1500, 2500, 3500, 4500,
     5500, 6500, 7500, 8500, 9500,
-    10500, 11500, 12500, 13500, 14500];
+    10500, 11500, 12500, 13500, 14500
+  ];
 
   select.selectAll("option")
     .data(levOptions)
@@ -433,7 +404,6 @@ function drawCalcChart(calcData, region, lev) {
     drawCalcChart(calcData, region, newLev);
   });
 
-  // filter rows for this region & level
   const rows = calcData
     .filter(d => d.region === region && +d.lev === +lev)
     .map(d => ({ year: +d.time, calc: +d.calc }))
@@ -441,15 +411,15 @@ function drawCalcChart(calcData, region, lev) {
 
   if (!rows.length) return;
 
-  // expose a helper so the SST slider can ask for the calc at a given year
-  window.getCalcForYear = function(year) {
+  // Expose calc lookup for SST slider
+  window.getCalcForYear = function (year) {
     const match = rows.find(r => r.year === year);
     return match ? match.calc : null;
   };
 
   const svg = d3.select("#calc-chart")
     .append("svg")
-    .attr("viewBox", `0 0 ${mapWidth} ${mapHeight + 40}`)
+    .attr("viewBox", `0 0 ${mapWidth} ${chartHeight + 40}`)
     .attr("preserveAspectRatio", "xMidYMid meet")
     .classed("responsive-svg", true);
 
@@ -465,7 +435,7 @@ function drawCalcChart(calcData, region, lev) {
     .x(d => x(d.year))
     .y(d => y(d.calc));
 
-  // current slider year if exists
+  // Start at current slider year if available
   const sliderInput = d3.select("#year-slider input").node();
   let currentYear = rows[0].year;
   if (sliderInput) {
@@ -488,27 +458,24 @@ function drawCalcChart(calcData, region, lev) {
     .attr("r", 5)
     .attr("fill", "black");
 
-  // axes
-  svg.append("g")
-    .attr("class", "x axis")
+  svg.append("g").attr("class", "x axis")
     .attr("transform", `translate(0,${chartHeight - 40})`)
     .call(d3.axisBottom(x).tickFormat(d3.format("d")));
 
-  svg.append("g")
-    .attr("class", "y axis")
+  svg.append("g").attr("class", "y axis")
     .attr("transform", `translate(60,0)`)
     .call(d3.axisLeft(y).ticks(6).tickFormat(d => d.toExponential(1)));
 
-  // labels
   svg.append("text")
     .attr("x", chartWidth / 2)
     .attr("y", 20)
     .attr("text-anchor", "middle")
     .attr("font-size", "20px")
     .text(`The Sea's Barrier is Weakening`);
+
   svg.append("text")
     .attr("x", chartWidth / 2)
-    .attr("y", 38)                
+    .attr("y", 38)
     .attr("text-anchor", "middle")
     .attr("font-size", "14px")
     .attr("fill", "#555")
@@ -530,31 +497,30 @@ function drawCalcChart(calcData, region, lev) {
     .attr("font-size", "14px")
     .text("Year");
 
-  // --- Annotation outside SVG ---
+  // Annotation
   const yearFirst = 1850, yearLast = 2014;
   const calcFirst = rows.find(r => r.year === yearFirst)?.calc;
-  const calcLast  = rows.find(r => r.year === yearLast)?.calc;
+  const calcLast = rows.find(r => r.year === yearLast)?.calc;
   const minRow = rows.reduce((a, b) => (a.calc < b.calc ? a : b));
 
-  const calcAnnotation = d3.select("#calc-annotation");
-  const deltaC = (calcLast != null && calcFirst != null) ? (calcLast - calcFirst) : null;
-  calcAnnotation.html(`
-    <p>Calcite concentration, a major indicator of the ocean's ability to neutralize acidity, has changed unevenly since industrialization. In places where it has declined, this change has left coral ecosystems and countless marine species more vulnerable to environmental degradation.</p>
-     <p>Since ${yearFirst}, the ${region} Ocean's calcite concentration at level ${lev} (${Math.round(lev/100)} m) changed by <strong>${formatSciDelta(deltaC, 2)} mol m<sup>−3</sup></strong>. Calcite concentration reached a low of <strong>${formatSci(minRow.calc, 2)} mol m<sup>−3</sup></strong> in ${minRow.year}.</p>
-  `).style("font-size", "14px")
-   .style("color", "#333")
-   .style("margin-top", "0.5rem");
+  d3.select("#calc-annotation")
+    .html(`
+      <p>Calcite concentration, a major indicator of the ocean's ability to neutralize acidity, has changed unevenly since industrialization. In places where it has declined, this change has left coral ecosystems and countless marine species more vulnerable to environmental degradation.</p>
+      <p>Since ${yearFirst}, the ${region} Ocean's calcite concentration at level ${lev} (${Math.round(lev/100)} m) changed by <strong>${formatSciDelta(calcLast - calcFirst, 2)} mol m<sup>−3</sup></strong>. Calcite concentration reached a low of <strong>${formatSci(minRow.calc, 2)} mol m<sup>−3</sup></strong> in ${minRow.year}.</p>
+    `)
+    .style("font-size", "14px")
+    .style("color", "#333")
+    .style("margin-top", "0.5rem");
 
-  // allow SST chart to move our marker with the year slider
-  window.updateCalcYear = function(selectedYear) {
+  // Expose year updates from SST slider
+  window.updateCalcYear = function (selectedYear) {
     const match = rows.find(r => r.year === selectedYear);
     if (!match) return;
     marker.attr("cx", x(match.year)).attr("cy", y(match.calc));
   };
 
-  // also refresh the Calc pill (no double-click needed)
+  // Refresh the Calc pill to current year
   const outCalc = document.getElementById('outCalc');
-  // prefer the pill's year if present; otherwise fall back to slider/currentYear
   let yr = null;
   const outYearEl = document.getElementById('outYear');
   if (outYearEl) {
@@ -562,13 +528,13 @@ function drawCalcChart(calcData, region, lev) {
     yr = t ? +t : null;
   }
   if (yr == null) {
-    const sliderInput = document.querySelector('#year-slider input[type="range"]');
-    if (sliderInput) yr = +sliderInput.value;
+    const sliderInput2 = document.querySelector('#year-slider input[type="range"]');
+    if (sliderInput2) yr = +sliderInput2.value;
   }
   if (yr == null) yr = currentYear;
-
-  if (outCalc){
+  if (outCalc) {
     const calcVal = window.getCalcForYear(yr);
-    outCalc.querySelector('.val').innerHTML = (calcVal==null) ? '—' : formatSci(calcVal,2) + '&nbsp;mol m<span class="sup">−3</span>';
+    outCalc.querySelector('.val').innerHTML = (calcVal == null) ? '—'
+      : formatSci(calcVal, 2) + '&nbsp;mol m<span class="sup">−3</span>';
   }
 }
